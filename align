@@ -1,0 +1,76 @@
+#####
+# ragweed-selection
+# Battlay et. al. 2022
+# align
+#####
+
+# paleomix pipeline
+cd ~/om62_scratch/ragweed2022/align/
+
+# each sample requires a makefile; see example 280808-1-10.yaml
+# get a list of makefiles;
+# exclude modern samples previously excluded in Bieker et al.
+ls makefiles/*.yaml \
+| grep -v KSAP_1.yaml \
+| grep -v KSAP_5.yaml \
+| grep -v KSAP-9.yaml \
+| grep -v BN-ON-5.yaml \
+| grep -v CT-H-5.yaml \
+| grep -v StGalmier-7.yaml \
+| grep -v 280808-1-18.yaml \
+| grep -v EU2-19-7.yaml \
+| grep -v FL-10.yaml \
+| grep -v FL-11.yaml \
+| grep -v FL-24.yaml \
+| grep -v FL-25.yaml \
+| grep -v FL-29.yaml \
+| grep -v FL-30.yaml \
+| grep -v FL-5.yaml \
+| grep -v FLD-3.yaml > makefiles.list
+
+###
+
+# paleomix-array.sh
+#!/bin/bash
+#SBATCH --job-name=paleomix
+#SBATCH --account=ha22
+#SBATCH --ntasks=1
+#SBATCH --ntasks-per-node=1
+#SBATCH --cpus-per-task=12
+#SBATCH --mem-per-cpu=16G
+#SBATCH --time=12:00:00
+#SBATCH --output=paleomix-%a.out
+#SBATCH --error=paleomix-%a.err
+#SBATCH --array=1-360
+
+module load paleomix/1.2.13.4-python2
+module load adapterremoval/2.3.1
+module load mapdamage/2.0.9-u1
+
+source /usr/local2/bioinformatics/bioansible_env.sh
+module load bwa/v0.7.15
+module load samtools/1.8
+
+cd ~/om62_scratch/ragweed2022/align/
+
+N=$SLURM_ARRAY_TASK_ID
+MKFL=$(cat makefiles.list | head -n $N | tail -n 1)
+
+paleomix bam_pipeline run /home/pbattlay/om62_scratch/ragweed2022/align/$MKFL \
+	--jar-root=/home/pbattlay/om62_scratch/jar/ \
+	--max-threads 12 \
+	--bwa-max-threads 12 \
+	--adapterremoval-max-threads 12 \
+	--jre-option \
+	-Xmx16g \
+	--temp-root /home/pbattlay/om62_scratch/ragweed2022/align/temp/
+
+###
+
+# extract mean coverage across each alignment
+for i in *.summary
+do
+cat $i | grep "hits_coverage(ragweed2021)" | awk '{print $1, $5}' | head -n 1
+done
+
+###
