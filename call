@@ -163,6 +163,6 @@ module load picard
 
 java -jar $EBROOTPICARD/picard.jar MergeVcfs \
 	I=vcf-all.list \
-	O=ragweed2021.raw.vcf
+	O=ragweed-dipasm-hap1.raw.vcf
 
 ###
