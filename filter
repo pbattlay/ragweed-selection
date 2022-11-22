@@ -1,0 +1,433 @@
+#####
+# ragweed-selection
+# Battlay et. al. 2022
+# filter variant calls
+#####
+
+# divide up SNPs and indels and extract variant call statistics
+ls vcf-BIG/*.raw.vcf > rawvcfs.list
+ls vcf-SML/*.raw.vcf >> rawvcfs.list
+
+# extract statistics for each 1Mb chunk
+# vcf-stats.sh
+#!/bin/bash
+#SBATCH --job-name=vcf-stats
+#SBATCH --account=def-rieseber
+#SBATCH --ntasks=1
+#SBATCH --ntasks-per-node=1
+#SBATCH --cpus-per-task=1
+#SBATCH --mem-per-cpu=10G
+#SBATCH --time=00:20:00
+#SBATCH --output=vcf-stats-%a.out
+#SBATCH --error=vcf-stats-%a.err
+#SBATCH --array=1-1127
+
+cd ~/scratch/ragweed/
+
+N=$SLURM_ARRAY_TASK_ID
+vcf=$(cat rawvcfs.list | head -n $N | tail -n 1)
+
+module load StdEnv/2020
+module load vcftools/0.1.16
+
+# SNPs
+vcftools --vcf $vcf --remove-indels --recode --recode-INFO-all --out ${vcf/.raw.vcf/.SNPs}
+# QD
+cat ${vcf/.raw.vcf/.SNPs}.recode.vcf | grep -v "^#" | awk '{print $8}' | sed 's/;/\n/g' | grep "^QD=" | awk -F "=" '{print $2}' > ${vcf/.raw.vcf/.SNPs}.QD
+# DP
+cat ${vcf/.raw.vcf/.SNPs}.recode.vcf | grep -v "^#" | awk '{print $8}' | sed 's/;/\n/g' | grep "^DP=" | awk -F "=" '{print $2}' > ${vcf/.raw.vcf/.SNPs}.DP
+# MQ
+cat ${vcf/.raw.vcf/.SNPs}.recode.vcf | grep -v "^#" | awk '{print $8}' | sed 's/;/\n/g' | grep "^MQ=" | awk -F "=" '{print $2}' > ${vcf/.raw.vcf/.SNPs}.MQ
+# FS
+cat ${vcf/.raw.vcf/.SNPs}.recode.vcf | grep -v "^#" | awk '{print $8}' | sed 's/;/\n/g' | grep "^FS=" | awk -F "=" '{print $2}' > ${vcf/.raw.vcf/.SNPs}.FS
+# SOR
+cat ${vcf/.raw.vcf/.SNPs}.recode.vcf | grep -v "^#" | awk '{print $8}' | sed 's/;/\n/g' | grep "^SOR=" | awk -F "=" '{print $2}' > ${vcf/.raw.vcf/.SNPs}.SOR
+# MQRankSum
+cat ${vcf/.raw.vcf/.SNPs}.recode.vcf | grep -v "^#" | awk '{print $8}' | sed 's/;/\n/g' | grep "^MQRankSum=" | awk -F "=" '{print $2}' > ${vcf/.raw.vcf/.SNPs}.MQRankSum
+# ReadPosRankSum
+cat ${vcf/.raw.vcf/.SNPs}.recode.vcf | grep -v "^#" | awk '{print $8}' | sed 's/;/\n/g' | grep "^ReadPosRankSum=" | awk -F "=" '{print $2}' > ${vcf/.raw.vcf/.SNPs}.ReadPosRankSum
+
+# indels
+vcftools --vcf $vcf --keep-only-indels --recode --recode-INFO-all --out ${vcf/.raw.vcf/.indels}
+# QD
+cat ${vcf/.raw.vcf/.indels}.recode.vcf | grep -v "^#" | awk '{print $8}' | sed 's/;/\n/g' | grep "^QD=" | awk -F "=" '{print $2}' > ${vcf/.raw.vcf/.indels}.QD
+# DP
+cat ${vcf/.raw.vcf/.indels}.recode.vcf | grep -v "^#" | awk '{print $8}' | sed 's/;/\n/g' | grep "^DP=" | awk -F "=" '{print $2}' > ${vcf/.raw.vcf/.indels}.DP
+# FS
+cat ${vcf/.raw.vcf/.indels}.recode.vcf | grep -v "^#" | awk '{print $8}' | sed 's/;/\n/g' | grep "^FS=" | awk -F "=" '{print $2}' > ${vcf/.raw.vcf/.indels}.FS
+# SOR
+cat ${vcf/.raw.vcf/.indels}.recode.vcf | grep -v "^#" | awk '{print $8}' | sed 's/;/\n/g' | grep "^SOR=" | awk -F "=" '{print $2}' > ${vcf/.raw.vcf/.indels}.SOR
+# ReadPosRankSum
+cat ${vcf/.raw.vcf/.indels}.recode.vcf | grep -v "^#" | awk '{print $8}' | sed 's/;/\n/g' | grep "^ReadPosRankSum=" | awk -F "=" '{print $2}' > ${vcf/.raw.vcf/.indels}.ReadPosRankSum
+# InbreedingCoeff
+cat ${vcf/.raw.vcf/.indels}.recode.vcf | grep -v "^#" | awk '{print $8}' | sed 's/;/\n/g' | grep "^InbreedingCoeff=" | awk -F "=" '{print $2}' > ${vcf/.raw.vcf/.indels}.InbreedingCoeff
+
+###
+
+# concatenate statistic lists
+cat vcf-BIG/*.SNPs.QD > vcf/stats/SNPs.QD.txt
+cat vcf-BIG/*.SNPs.DP > vcf/stats/SNPs.DP.txt
+cat vcf-BIG/*.SNPs.MQ > vcf/stats/SNPs.MQ.txt
+cat vcf-BIG/*.SNPs.FS > vcf/stats/SNPs.FS.txt
+cat vcf-BIG/*.SNPs.SOR > vcf/stats/SNPs.SOR.txt
+cat vcf-BIG/*.SNPs.MQRankSum > vcf/stats/SNPs.MQRankSum.txt
+cat vcf-BIG/*.SNPs.ReadPosRankSum > vcf/stats/SNPs.ReadPosRankSum.txt
+
+cat vcf-BIG/*.indels.QD > vcf/stats/indels.QD.txt
+cat vcf-BIG/*.indels.DP > vcf/stats/indels.DP.txt
+cat vcf-BIG/*.indels.FS > vcf/stats/indels.FS.txt
+cat vcf-BIG/*.indels.SOR > vcf/stats/indels.SOR.txt
+cat vcf-BIG/*.indels.ReadPosRankSum > vcf/stats/indels.ReadPosRankSum.txt
+cat vcf-BIG/*.indels.InbreedingCoeff > vcf/stats/indels.InbreedingCoeff.txt
+
+cat vcf-SML/*.SNPs.QD >> vcf/stats/SNPs.QD.txt
+cat vcf-SML/*.SNPs.DP >> vcf/stats/SNPs.DP.txt
+cat vcf-SML/*.SNPs.MQ >> vcf/stats/SNPs.MQ.txt
+cat vcf-SML/*.SNPs.FS >> vcf/stats/SNPs.FS.txt
+cat vcf-SML/*.SNPs.SOR >> vcf/stats/SNPs.SOR.txt
+cat vcf-SML/*.SNPs.MQRankSum >> vcf/stats/SNPs.MQRankSum.txt
+cat vcf-SML/*.SNPs.ReadPosRankSum >> vcf/stats/SNPs.ReadPosRankSum.txt
+
+cat vcf-SML/*.indels.QD >> vcf/stats/indels.QD.txt
+cat vcf-SML/*.indels.DP >> vcf/stats/indels.DP.txt
+cat vcf-SML/*.indels.FS >> vcf/stats/indels.FS.txt
+cat vcf-SML/*.indels.SOR >> vcf/stats/indels.SOR.txt
+cat vcf-SML/*.indels.ReadPosRankSum >> vcf/stats/indels.ReadPosRankSum.txt
+cat vcf-SML/*.indels.InbreedingCoeff >> vcf/stats/indels.InbreedingCoeff.txt
+
+# clean up
+rm vcf-BIG/*.QD
+rm vcf-BIG/*.DP
+rm vcf-BIG/*.MQ
+rm vcf-BIG/*.FS
+rm vcf-BIG/*.SOR
+rm vcf-BIG/*.MQRankSum
+rm vcf-BIG/*.ReadPosRankSum
+
+rm vcf-SML/*.QD
+rm vcf-SML/*.DP
+rm vcf-SML/*.MQ
+rm vcf-SML/*.FS
+rm vcf-SML/*.SOR
+rm vcf-SML/*.MQRankSum
+rm vcf-SML/*.ReadPosRankSum
+
+# statistic distribution plots in R with GATK-recommended thresholds marked
+library(ggplot2)
+library(gridExtra)
+
+setwd("~/scratch/ragweed/vcf/stats/")
+
+# SNPs
+snps.QD = as.data.frame(sample(as.numeric(scan("SNPs.QD.txt", what = "vector")), 100000))
+colnames(snps.QD) = "V1"
+snps.MQ = as.data.frame(sample(as.numeric(scan("SNPs.MQ.txt", what = "vector")), 100000))
+colnames(snps.MQ) = "V1"
+snps.FS = as.data.frame(sample(as.numeric(scan("SNPs.FS.txt", what = "vector")), 100000))
+colnames(snps.FS) = "V1"
+snps.SOR = as.data.frame(sample(as.numeric(scan("SNPs.SOR.txt", what = "vector")), 100000))
+colnames(snps.SOR) = "V1"
+snps.MQRankSum = as.data.frame(sample(as.numeric(scan("SNPs.MQRankSum.txt", what = "vector")), 100000))
+colnames(snps.MQRankSum) = "V1"
+snps.ReadPosRankSum = as.data.frame(sample(as.numeric(scan("SNPs.ReadPosRankSum.txt", what = "vector")), 100000))
+colnames(snps.ReadPosRankSum) = "V1"
+snps.DP = as.data.frame(sample(as.numeric(scan("SNPs.DP.txt", what = "vector")), 100000))
+colnames(snps.DP) = "V1"
+
+snps.QD.plot = ggplot(snps.QD, aes(x = log10(V1))) + 
+	geom_density() + 
+	geom_vline(aes(xintercept = log10(2)), color = "red") +
+	labs(x = "log10(SNP QD)") +
+	theme_classic()
+
+snps.MQ.plot = ggplot(snps.MQ, aes(x = V1)) + 
+	geom_density() + 
+	geom_vline(aes(xintercept = 40), color = "red") +
+	labs(x = "SNP MQ") +
+	theme_classic()
+
+snps.FS.plot = ggplot(snps.FS, aes(x = log10(V1))) + 
+	geom_density() + 
+	geom_vline(aes(xintercept = log10(60)), color = "red") +
+	labs(x = "log10(SNP FS)") +
+	theme_classic()
+
+snps.SOR.plot = ggplot(snps.SOR, aes(x = log10(V1))) + 
+	geom_density() + 
+	geom_vline(aes(xintercept = log10(3)), color = "red") +
+	labs(x = "log10(SNP SOR)") +
+	theme_classic()
+
+snps.MQRankSum.plot = ggplot(snps.MQRankSum, aes(x = V1)) + 
+	geom_density() + 
+	geom_vline(aes(xintercept = -12.5), color = "red") +
+	labs(x = "SNP MQRankSum") +
+	theme_classic()
+
+snps.ReadPosRankSum.plot = ggplot(snps.ReadPosRankSum, aes(x = V1)) + 
+	geom_density() + 
+	geom_vline(aes(xintercept = -8), color = "red") +
+	labs(x = "SNP ReadPosRankSum") +
+	theme_classic()
+
+snps.DP.plot = ggplot(snps.DP, aes(x = V1)) + 
+	geom_density() +
+	geom_vline(aes(xintercept = mean(V1) + 1.5 * sd(V1)), color = "red") +
+	geom_vline(aes(xintercept = mean(V1) - 1 * sd(V1)), color = "red") +
+	labs(x = "SNP DP") +
+	theme_classic()
+
+pdf(file = "SNPs-filter.pdf",
+  width = 14,
+  height = 10.5,
+  useDingbats=FALSE)
+grid.arrange(snps.QD.plot, snps.DP.plot, snps.MQ.plot, snps.FS.plot, snps.SOR.plot, snps.MQRankSum.plot, snps.ReadPosRankSum.plot, nrow = 3)
+dev.off()
+
+# indels
+indels.QD = as.data.frame(sample(as.numeric(scan("indels.QD.txt", what = "vector")), 100000))
+colnames(indels.QD) = "V1"
+indels.FS = as.data.frame(sample(as.numeric(scan("indels.FS.txt", what = "vector")), 100000))
+colnames(indels.FS) = "V1"
+indels.SOR = as.data.frame(sample(as.numeric(scan("indels.SOR.txt", what = "vector")), 100000))
+colnames(indels.SOR) = "V1"
+indels.ReadPosRankSum = as.data.frame(sample(as.numeric(scan("indels.ReadPosRankSum.txt", what = "vector")), 100000))
+colnames(indels.ReadPosRankSum) = "V1"
+indels.InbreedingCoeff = as.data.frame(sample(as.numeric(scan("indels.InbreedingCoeff.txt", what = "vector")), 100000))
+colnames(indels.InbreedingCoeff) = "V1"
+indels.DP = as.data.frame(sample(as.numeric(scan("indels.DP.txt", what = "vector")), 100000))
+colnames(indels.DP) = "V1"
+
+indels.QD.plot = ggplot(indels.QD, aes(x = log10(V1))) + 
+	geom_density() + 
+	geom_vline(aes(xintercept = log10(2)), color = "red") +
+	labs(x = "log10(indel QD)") +
+	theme_classic()
+
+indels.FS.plot = ggplot(indels.FS, aes(x = log10(V1))) + 
+	geom_density() + 
+	geom_vline(aes(xintercept = log10(200)), color = "red") +
+	labs(x = "log10(indel FS)") +
+	theme_classic()
+
+indels.SOR.plot = ggplot(indels.SOR, aes(x = log10(V1))) + 
+	geom_density() + 
+	geom_vline(aes(xintercept = log10(10)), color = "red") +
+	labs(x = "log10(indel SOR)") +
+	theme_classic()
+
+indels.ReadPosRankSum.plot = ggplot(indels.ReadPosRankSum, aes(x = V1)) + 
+	geom_density() + 
+	geom_vline(aes(xintercept = -20), color = "red") +
+	labs(x = "indel ReadPosRankSum") +
+	theme_classic()
+
+indels.InbreedingCoeff.plot = ggplot(indels.InbreedingCoeff, aes(x = V1)) + 
+	geom_density() + 
+	geom_vline(aes(xintercept = -0.8), color = "red") +
+	labs(x = "indel InbreedingCoeff") +
+	theme_classic()
+
+indels.DP.plot = ggplot(indels.DP, aes(x = V1)) + 
+	geom_density() +
+	geom_vline(aes(xintercept = mean(V1) + 1.5 * sd(V1)), color = "red") +
+	geom_vline(aes(xintercept = mean(V1) - 1 * sd(V1)), color = "red") +
+	labs(x = "indel DP") +
+	theme_classic()
+
+pdf(file = "indels-filter.pdf",
+  width = 14,
+  height = 7,
+  useDingbats=FALSE)
+grid.arrange(indels.QD.plot, indels.DP.plot, indels.FS.plot, indels.SOR.plot, indels.ReadPosRankSum.plot, indels.InbreedingCoeff.plot, nrow = 2)
+dev.off()
+
+###
+
+# array job to tag variants for filtering
+# vcf-tag.sh
+#!/bin/bash
+#SBATCH --job-name=vcf-tag
+#SBATCH --account=def-rieseber
+#SBATCH --ntasks=1
+#SBATCH --ntasks-per-node=1
+#SBATCH --cpus-per-task=1
+#SBATCH --mem-per-cpu=16G
+#SBATCH --time=00:20:00
+#SBATCH --output=vcf-tag-%a.out
+#SBATCH --error=vcf-tag-%a.err
+#SBATCH --array=1-1127
+
+cd ~/scratch/ragweed/
+
+N=$SLURM_ARRAY_TASK_ID
+vcf=$(cat rawvcfs.list | head -n $N | tail -n 1)
+
+module purge
+module load nixpkgs/16.09
+module load gatk/3.8
+
+java \
+-jar $EBROOTGATK/GenomeAnalysisTK.jar \
+-T VariantFiltration \
+-R ref/ragweed-dipasm-hap1.fasta \
+-V ${vcf/.raw.vcf/.SNPs}.recode.vcf \
+-filter "QD < 2.0" --filterName "QD2" \
+-filter "QUAL < 30.0" --filterName "QUAL30" \
+-filter "SOR > 3.0" --filterName "SOR3" \
+-filter "FS > 60.0" --filterName "FS60" \
+-filter "MQ < 40.0" --filterName "MQ40" \
+-filter "MQRankSum < -12.5" --filterName "MQRankSum-12.5" \
+-filter "ReadPosRankSum < -8.0" --filterName "ReadPosRankSum-8" \
+-filter "DP > 4968.41" --filterName "DP-4968.41" \
+-filter "DP < 500.83" --filterName "DP-500.83" \
+-o ${vcf/.raw.vcf/.SNPs}.HardFilterTag.vcf
+
+java \
+-jar $EBROOTGATK/GenomeAnalysisTK.jar \
+-T VariantFiltration \
+-R ref/ragweed-dipasm-hap1.fasta \
+-V ${vcf/.raw.vcf/.indels}.recode.vcf \
+-filter "QD < 2.0" --filterName "QD2" \
+-filter "QUAL < 30.0" --filterName "QUAL30" \
+-filter "FS > 200.0" --filterName "FS200" \
+-filter "ReadPosRankSum < -20.0" --filterName "ReadPosRankSum-20" \
+-filter "SOR > 10.0" --filterName "SOR-10" \
+-filter "InbreedingCoeff < -0.8" --filterName "InbreedingCoeff--0.8" \
+-filter "DP > 4934.85" --filterName "DP-4934.85" \
+-filter "DP < 221.66" --filterName "DP-221.66" \
+-o ${vcf/.raw.vcf/.indels}.HardFilterTag.vcf
+
+###
+
+# array job to remove filtered variants plus additional filters
+# remove variants called in less than 80% of samples
+# remove variants with a genotype depth < 3
+
+# vcf-filter.sh
+#!/bin/bash
+#SBATCH --job-name=vcf-filter
+#SBATCH --account=def-rieseber
+#SBATCH --ntasks=1
+#SBATCH --ntasks-per-node=1
+#SBATCH --cpus-per-task=1
+#SBATCH --mem-per-cpu=16G
+#SBATCH --time=00:05:00
+#SBATCH --output=vcf-filter-%a.out
+#SBATCH --error=vcf-filter-%a.err
+#SBATCH --array=1-1127
+
+cd ~/scratch/ragweed/
+
+N=$SLURM_ARRAY_TASK_ID
+vcf=$(cat rawvcfs.list | head -n $N | tail -n 1)
+
+module purge
+module load StdEnv/2020
+module load vcftools
+
+vcftools --vcf ${vcf/.raw.vcf/.SNPs}.HardFilterTag.vcf \
+--max-missing 0.8 \
+--minDP 3 \
+--remove-filtered-all \
+--recode \
+--recode-INFO-all \
+--out ${vcf/.raw.vcf/.SNPs}.HardFilter
+
+vcftools --vcf ${vcf/.raw.vcf/.indels}.HardFilterTag.vcf \
+--max-missing 0.8 \
+--minDP 3 \
+--remove-filtered-all \
+--recode \
+--recode-INFO-all \
+--out ${vcf/.raw.vcf/.indels}.HardFilter
+
+###
+
+# merge filtered VCF chunks into single a VCF
+ls vcf-BIG/*.SNPs.HardFilter.recode.vcf > vcf.HardFilter.list
+ls vcf-BIG/*.indels.HardFilter.recode.vcf >> vcf.HardFilter.list
+ls vcf-SML/*.SNPs.HardFilter.recode.vcf >> vcf.HardFilter.list
+ls vcf-SML/*.indels.HardFilter.recode.vcf >> vcf.HardFilter.list
+
+# vcf-merge.sh
+#!/bin/bash
+#SBATCH --job-name=vcf-merge
+#SBATCH --account=def-rieseber
+#SBATCH --ntasks=1
+#SBATCH --ntasks-per-node=1
+#SBATCH --cpus-per-task=1
+#SBATCH --mem-per-cpu=10G
+#SBATCH --time=01:00:00
+#SBATCH --output=vcf-merge.out
+#SBATCH --error=vcf-merge.err
+
+cd ~/scratch/ragweed/
+
+module purge
+module load StdEnv/2020
+module load picard
+
+java -Xmx8g -jar $EBROOTPICARD/picard.jar MergeVcfs \
+	I=vcf.HardFilter.list \
+	O=ragweed-dipasm-hap1.HardFilter.vcf
+
+###
+
+# list missingness for each sample
+vcftools --vcf ragweed-dipasm-hap1.HardFilter.vcf \
+--out ragweed-dipasm-hap1.HardFilter \
+--missing-indv
+
+# exclude samples with > 50% missing
+vcftools --vcf ragweed-dipasm-hap1.HardFilter.vcf \
+--remove ifilter.txt \
+--mac 1 \
+--recode \
+--recode-INFO-all \
+--out ragweed-dipasm-hap1.HardFilter.311
+
+###
+
+# fix mislabeled samples 
+# change MO-18 to MP-18
+# change MOB-1 to MOB-8
+cat ragweed-dipasm-hap1.HardFilter.311.recode.vcf | grep "^##" > ragweed-dipasm-hap1.unimputed.vcf
+cat ragweed-dipasm-hap1.HardFilter.311.recode.vcf | grep "^#CHROM" | head -n 1 | sed 's/MO-18/MP-18/' | sed 's/MOB-1/MOB-8/' >> ragweed-dipasm-hap1.unimputed.vcf
+cat ragweed-dipasm-hap1.HardFilter.311.recode.vcf | grep -v "^#" >> ragweed-dipasm-hap1.unimputed.vcf
+
+# get list of scaffols with variants called
+cat ragweed-dipasm-hap1.unimputed.vcf | grep -v "^#" | awk '{print $1}' | sort -u > vcontiglist.txt
+
+# an array job to impute each scaffold separately with beagle
+# impute.sh
+#!/bin/bash
+#SBATCH --job-name=impute
+#SBATCH --account=def-rieseber
+#SBATCH --time=12:00:00
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=1
+#SBATCH --mem-per-cpu=32G
+#SBATCH --output=impute-%a.out
+#SBATCH --error=impute-%a.err
+#SBATCH --array=1-24
+
+cd ~/scratch/ragweed/
+
+N=$SLURM_ARRAY_TASK_ID
+SCAFF=$(cat vcontiglist.txt | head -n $N | tail -n 1)
+
+java -Xmx32g -jar beagle/beagle.22Jul22.46e.jar \
+out=beagle/$SCAFF \
+gt=ragweed-dipasm-hap1.unimputed.vcf \
+nthreads=1 \
+window=20.0 \
+chrom=$SCAFF
+
+###
+
+# index imputed contigs
+for i in beagle/*.vcf.gz; do echo $i; bcftools index $i; done
+
+# merge imputed VCFs
+bcftools concat beagle/*.vcf.gz > ragweed-dipasm-hap1.imputed.vcf
