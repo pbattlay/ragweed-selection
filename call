@@ -55,7 +55,7 @@ java -jar $EBROOTGATK/GenomeAnalysisTK.jar \
 
 # array job to call variants on a big scaffold in 1Mb windows
 
-# UG-BIG-h1s18.sh
+# UG-BIG-h1s1.sh
 #!/bin/bash
 #SBATCH --job-name=UG-BIG-h1s1
 #SBATCH --account=def-rieseber
