@@ -1,0 +1,321 @@
+#####
+# ragweed-selection
+# Battlay et. al. 2023
+# align
+#####
+
+# in R
+setwd("~/om62_scratch/ragweed2022/gwas/")
+
+# trait data from van Boheemen Atwater & Hodgins (2019)
+phenraw <-  read.table("phenraw.txt", header = T)
+#SampleID	                Code for plant sample
+#Mom	                    Code for maternal line
+#Pop	                    Code for population of collection of mother
+#Range	                  Continent of provenance
+#ABCcluster               Cluster as defined for ABC analyses (UK = unknown, not used in ABC (native only, as introced ranges are grouped as a whole))
+#Treatment	              Treatment of the sample. C = Control experiment a, watered 2x/day; D = Drought experiment a, watered on average every 1.5 day 
+#T_fem_day	              First recorded day of female flowering (number of days after second transplant)
+#T_male_day	              First recorded day of male flowering  (number of days after second transplant)
+#T_pol_day	              First recorded day of pollen production (number of days after second transplant)
+#T_seeds_day	            First recorded day of ripe seeds (number of days after second transplant)
+#T_rac_die_day	          First recorded date of racemes dying  (number of days after second transplant)
+#T_day_final    	        Date of final measurements (days after second transplant)
+#T_die_day	              Number of days after second transplant no racemes produced pollen
+#T_Branches	              Number of branches from main stem. Only branches ending in leaves are  counted
+#T_Racemes	              number of racemes
+#T_Raceme_length_longest	length of longest raceme. Did not take length of 'main' raceme, as in many cases discrimination was impossible
+#T_Longest_leaf	          Length of longest leaf in mm. Longest leaf might have died/fallen off due to scenescence
+#T_width_longest_leaf	    width of longest leaf in mm. Not always possible due to scenescence. 
+#T_Stem_width_mum	        width of stem at base, in micro meter
+#T_Height	                height of plant in mm
+#T_Width	                width of plant in mm
+#T_angle	                Average branch angle to main stem. Moving a protractor along the main stem and reading off branch angles. An average   measure of angle if #number of branches was more than 2 and variation of mean angle did not exceed 10 degrees 
+#T_male_weight	          Dry weight of racemes in milligrams
+#T_plant_weight	          Dry weight of above-ground biomass in grams, including seeds, excluding racemes
+#T_plant_noseed	          Dry weight of above-ground biomass in grams, excluding seeds, excluding racemes
+#T_root_weights	          Dry weight of below-ground biomass in grams
+#T_seed_weight_tot	      Dry total weight of all seeds in milligrams
+#T_seed_20	              Dry weight of 20 seeds in milligrams
+#T_leaf_weight	          Dry weight of fully-expanded new leaf in milligrams
+#T_leaf_nostem	          Dry weight of above leaves without the stalk
+#T_leaf_area	            Area of leaf in square cm *10
+##T_leaf_perim	          Perimeter of leaf in cm *10
+#T_leaf_image           	Type of image used to save leaf area photos (calcutions from png images seemed dubious)
+#T_germ	                  Proportion of maternal seeds germinated
+#T_momseed_mg	            Average seed weight of maternal line
+# reformat data type
+phenraw$Treatment <- as.factor(phenraw$Treatment) 
+phenraw$T_seed_weight_tot <- as.numeric(phenraw$T_seed_weight_tot) 
+phenraw$T_seed_20 <- as.numeric(phenraw$T_seed_20)
+# Further calculations per trait category
+#Size
+phenraw$T_shoot_biom <- phenraw$T_male_weight + (phenraw$T_plant_weight)*1000 # the latter also includes seeds
+phenraw$T_tot_biom <- (phenraw$T_shoot_biom + phenraw$T_root_weights*1000)/1000
+#phenology
+#phenraw$T_fem_length <- phenraw$T_seeds_day - phenraw$T_fem_day # length of female flowering (day of ripe seeds - day of first occurance)
+#phenraw$T_male_length <- phenraw$T_rac_die_day - phenraw$T_pol_day # length of male flowering (day of racemes dying - day of first pollen production)
+phenraw$T_fl_end<-apply(phenraw[,c("T_seeds_day","T_rac_die_day")],1,max) # last day of either first occurance ripe seeds or first day racemes daying
+phenraw$T_fl_start <- apply(phenraw[,c("T_fem_day","T_pol_day")],1,min) # first day of either first occurance female or first pollen production
+#phenraw$T_flower_length <- phenraw$T_fl_end - phenraw$T_fl_start # length of flowering season
+phenraw$T_sexmismatch <- phenraw$T_pol_day - phenraw$T_fem_day
+#phenraw$T_sexmismatch_length <- phenraw$T_male_length - phenraw$T_fem_length
+# Fitness
+phenraw$T_seeds_tot <- (phenraw$T_seed_weight_tot/ phenraw$T_seed_20) * 20 # total number of seeds per plant --> this is a total fitness measure
+phenraw$T_fit_all <- (phenraw$T_male_weight + phenraw$T_seed_weight_tot)/1000
+phenraw$T_repal <- phenraw$T_fit_all / phenraw$T_tot_biom
+#henraw$T_repalm <- phenraw$T_male_weight / phenraw$T_tot_biom
+#phenraw$T_repalf <- phenraw$T_seed_weight_tot / phenraw$T_tot_biom
+# Physiological traits
+phenraw$T_leaf_weight <- as.numeric(phenraw$T_leaf_weight) 
+phenraw$T_Sla <- (phenraw$T_leaf_area*100) / phenraw$T_leaf_weight # Specific Leaf Area ((mm^2)/mg)
+#Relative investment
+phenraw$T_sexrat_weight <- phenraw$T_seed_weight_tot /phenraw$T_male_weight # sex-ratio expressed in biomass of reproductive structures
+#phenraw$T_sexrat_numweight <- phenraw$T_seeds_tot / phenraw$T_male_weight # sex-ratio expressed in number of female / biomass of male reproductive structure
+phenraw$T_rootshoot_rat <- phenraw$T_root_weights*1000 / phenraw$T_shoot_biom # root/shoot ratio
+#remove traits which are inconsistent or dubious
+phenraw <- phenraw[ ,-which(names(phenraw) %in% c("T_Width" # highly inconsisten according to growth data
+                                         ,"T_angle" # inconsistent measurements
+                                         ,"T_leaf_image" # removed data retrieved from .png images before loading datafile
+                                         ,"T_Height" # Maximum height occasionaly occured before final measurement, get from growth file below
+                                         ,"T_leaf_nostem" # only measured for some leaves, highly linear with leaf_weight, so doesn't add info
+                                         ,"T_plant_weight" #incorporated in shoot_biom
+                                         ,"T_plant_noseed" # incorporated in shoot_biom
+                                         ,"T_width_longest_leaf" #highly colinear with length longest leaf
+                                         ))]
+#remove traits which are unnecessary or have a better descriptive trait; physiology
+phenraw <- phenraw[ ,-which(names(phenraw) %in% c("T_leaf_weight" # better measure is SLA; variable dependent on plant size
+                                         ,"T_leaf_area" # better measure is SLA; variable dependent on plant size
+                                         ,"T_leaf_perim" # variable dependent on leaf/plant size. Inconsistency in data collection, can be improved
+                                         ))]
+#remove traits which are unnecessary or have a better descriptive trait; phenrawology
+#phenraw <- phenraw[ ,-which(names(phenraw) %in% c("T_seeds_day" # already captured by fem_length
+#                                         ,"T_rac_die_day" # already captured by mal_length
+#                                         ,"T_fl_end" # already captured by fl_length & flower_start
+#                                         ,"T_day_final" # already captured by fl_length & flower_start
+#                                         ,"T_stop_day" # already captured by fl_length & flower_start
+#                                         ,"T_male_day" #already captured by pol
+#                                         ))]
+#remove traits which are unnecessary or have a better descriptive trait; size
+phenraw <- phenraw[ ,-which(names(phenraw) %in% c("T_minHeight_cm" # determined by germ
+                                         ,"T_root_weights" # captured by root/shoot ratio; trait dependend on plant size
+                                                                                 ))]
+# remove sample with high number of inconsistencies
+phenraw <- phenraw[-which(phenraw$SampleID=="AU23-8F"),]
+
+growth <- read.csv("IndivModOut_161210.csv", header = T) # from Growth script
+growth <-growth[,-c(2,4:20)] # remove all non-growth variables (t- and p-val's etc)
+
+phenC = subset(phenraw, Treatment == "C")
+gwas = read.table("gwas-sample-order.txt", header = T)
+gwas.phen = merge(gwas, phenC, by = "SampleID", all.x = T)
+gwas.phen.growth = merge(gwas.phen, growth, by = "SampleID", all.x = T)
+gwas.phen.growth = gwas.phen.growth[ ,-which(names(gwas.phen.growth) %in% c("SampleID", "Mom", "Pop", "Range", "Treatment", "T_InflxPt_Ht_cm", "T_LinGrStart_Day", "T_LinGrEnd_Day",  "T_Growth5pct_cm", "T_Growth5pct_Day", "T_Growth95pct_cm", "T_Growth95pct_Day", "T_Growth5.95pct_cm", "T_Growth5.95pct_Days", "T_germ", "T_Sla"))]
+
+write.table(gwas.phen.growth, file = "gwas-wgs-pheno-NEW.txt", row.names = F, col.names = T, quote = F)
+
+# run GWAS
+cd ~/om62_scratch/ragweed2022/gwas/
+
+module load plink/1.9
+
+for i in {2..32}
+do
+phen=$(cat gwas-wgs-pheno-NEW.txt | head -n 1 | awk -v i="$i" '{print $i}')
+cat gwas-wgs-pheno-NEW.txt \
+| tail -n +2 \
+| awk -v i="$i" '{print $1"\t"$1"\t"$i}' > $phen.WGS.NEW.pheno
+done
+
+# read VCF and convert to 0-1-2 format (transposed)
+plink \
+--vcf ~/om62_scratch/ragweed2022/vcf/ragweed-dipasm-hap1.imputed.vcf \
+--allow-extra-chr \
+--keep gwas-samples.list \
+--snps-only 'just-acgt' \
+--biallelic-only 'strict' \
+--maf 0.05 \
+--vcf-half-call m \
+--double-id \
+--make-bed \
+--out temp-gwas
+
+# name variants
+cat temp-gwas.bim | awk '{print $1 "\t" $1 ":" $4 "\t" $3 "\t" $4 "\t" $5 "\t" $6}' > temp-gwas.bim1
+mv temp-gwas.bim1 temp-gwas.bim
+
+cat ~/om62_scratch/ragweed2022/annot_filtered/genes_filtered.gff \
+| awk '$3 == "gene" {print $1, $4, $5}' > gene-regions.txt
+
+# and filter for contigs in our dataset
+while read contig
+do
+grep "$contig\b" gene-regions.txt
+done < ~/ha22/ragweed2/vcf/imputed-contigs.list > gene-regions1.txt
+
+mv gene-regions1.txt gene-regions.txt
+
+# get list of LD-pruned variants
+plink \
+--bfile temp-gwas \
+--allow-extra-chr \
+--exclude gene-regions.txt \
+--indep-pairwise 50 5 0.5 \
+--out gwas
+
+# output pruned dataset and kinship matrix
+plink \
+--bfile temp-gwas \
+--allow-extra-chr \
+--keep gwas-samples.list \
+--extract gwas.prune.in \
+--snps-only 'just-acgt' \
+--biallelic-only 'strict' \
+--maf 0.05 \
+--distance square ibs flat-missing \
+--output-missing-genotype 0 \
+--recode 12 transpose \
+--out ragweed-plink-gwas
+
+# output unpruned dataset
+plink \
+--bfile temp-gwas \
+--allow-extra-chr \
+--keep gwas-samples.list \
+--biallelic-only 'strict' \
+--snps-only 'just-acgt' \
+--geno 0.1 \
+--mind 0.3 \
+--maf 0.05 \
+--output-missing-genotype 0 \
+--recode 12 transpose \
+--out ragweed-plink-gwas-noprune
+
+# sort phenotypes
+for i in *.WGS.NEW.pheno
+do
+while read c1 c2
+do
+cat $i \
+| awk -v c1="$c1" '$1 == c1 {print $0}'
+done < ragweed-plink-gwas-noprune.tfam > $i.sorted
+done
+
+# run EMMAX GWAS
+for i in *.WGS.NEW.pheno.sorted
+do
+~/ha22_scratch/EMMAX/emmax -v -t ragweed-plink-gwas-noprune -p $i -k ragweed-plink-gwas.mibs -o ${i/.pheno.sorted/}
+done
+
+# Bonferroni: p < 4.38E-8
+for i in *.WGS.NEW.ps
+do
+cat $i | awk '$3 < 4.38E-8 {print $0}' > $i.bon
+done
+
+# get a list of Bonferroni-significant candidate lists
+wc -l *.WGS.NEW.ps.bon | awk '$1 != 0 {print $2}' | grep -v "total" > bon.list
+
+# annotate candidates
+# functional annotation
+while read i
+do
+cat $i | awk '{print $0}' | sed 's/:/ /' \
+| while read contig loc beta pval
+do
+echo -e $contig"\t"$loc"\t"$beta"\t"$pval"\t""$(cat ../fun/ragweed-dipasm-hap1-annot-GO-1e-6.txt | awk -F "\t" -v c="$contig" -v l="$loc" 'BEGIN{OFS="\t";} $3 == c && $4 <= l && $5 >= l {print $0}')"
+done > $i.annot
+done < bon.list
+
+# snpEff annotation
+while read i
+do
+cat $i | awk '{print $0}' | sed 's/:/ /' \
+| while read contig loc beta pval
+do
+echo -e $contig"\t"$loc"\t"$beta"\t"$pval"\t""$(cat ../vcf/ragweed-dipasm-hap1.imputed.snpEff.vcf | awk -F "\t" -v c="$contig" -v l="$loc" 'BEGIN{OFS="\t";} $1 == c && $2 == l {print $8}')"
+done > $i.snpEff
+done < bon.list
+
+
+# Haploblock GWAS
+# make TPED files in R
+setwd("~/om62_scratch/ragweed2022/lostruct/het/")
+
+hbs.df = read.table("~/om62_scratch/ragweed2022/gwas/hbs.txt", header = F)
+
+hbs = hbs.df$V1
+
+genos = read.table(paste0(hbs[1], ".geno"), header = F)
+colnames(genos) = c("SAMPLE", as.character(hbs[1]))
+
+for (i in 2:length(hbs)){
+genos = cbind(genos, read.table(paste0(hbs[i], ".geno"), header = F)$V2)
+colnames(genos)[i + 1] = as.character(hbs[i])
+}
+
+# read in GWAS samples
+#gwas.samples = read.table("~/om62_scratch/ragweed2022/gwas/gwas-samples.list", header = F)$V1
+#genos = genos[which(genos$SAMPLE %in% gwas.samples), ]
+
+pheno = read.table("~/om62_scratch/ragweed2022/gwas/T_Branches.WGS.NEW.pheno.sorted", header = F)
+
+genos = genos[match(pheno$V1, genos$SAMPLE), ]
+
+tped = as.data.frame(matrix(ncol = (2 * nrow(pheno)), nrow = length(hbs)))
+rownames(tped) = hbs
+
+for (j in 1:nrow(genos)){
+
+colnames(tped)[2 * j -1] = paste0(genos$SAMPLE[j])
+colnames(tped)[2 * j] = paste0(genos$SAMPLE[j])
+
+for (i in 1:length(hbs)){
+hbgeno = genos[j, i + 1]
+
+if (hbgeno == 0){
+tped[i, 2 * j -1] = 1
+tped[i, 2 * j] = 1
+}
+
+if (hbgeno == 0.5){
+tped[i, 2 * j -1] = 1
+tped[i, 2 * j] = 2
+}
+
+if (hbgeno == 1){
+tped[i, 2 * j -1] = 2
+tped[i, 2 * j] = 2
+}
+
+}
+}
+
+tped.head = cbind(as.character(hbs.df$V2), as.character(hbs.df$V1), 0, round(hbs.df$V3 + (hbs.df$V4 - hbs.df$V3) / 2))
+tped = cbind(tped.head, tped)
+
+write.table(tped,
+	file = "~/om62_scratch/ragweed2022/gwas/ragweed-plink-gwas-hb.tped",
+	row.names = F,
+	col.names = F,
+	quote = F)
+
+tfam = cbind(as.character(genos$SAMPLE), as.character(genos$SAMPLE), 0, 0, 0, -9)
+
+write.table(tfam,
+	file = "~/om62_scratch/ragweed2022/gwas/ragweed-plink-gwas-hb.tfam",
+	row.names = F,
+	col.names = F,
+	quote = F)
+
+# run EMMAX GWAS for inversions
+for i in *.WGS.NEW.pheno.sorted
+do
+~/ha22_scratch/EMMAX/emmax -v -t ragweed-plink-gwas-hb -p $i -k ragweed-plink-gwas.mibs -o ${i/.pheno.sorted/.hb}
+done
+
+# Bonferroni: p < 0.003333
+for i in *.WGS.NEW.hb.ps
+do
+cat $i | awk '$3 < 0.003333 {print $0}' > $i.bon
+done
