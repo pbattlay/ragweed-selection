@@ -1,0 +1,149 @@
+#####
+# ragweed-selection
+# Battlay et. al. 2023
+# gene functional annotation
+#####
+
+cd ~/om62_scratch/ragweed2022/fun/
+
+# BLAST results with the top TAIR10 hit for each ragweed gene
+blastp \
+-query ~/om62_scratch/ragweed2022/annot_filtered/ragweed-dipasm-hap1.all.maker.proteins.filtered.fasta \
+-db ~/ha22_scratch/ragweed-annot/TAIR10 \
+-max_target_seqs 1 \
+-max_hsps 1 \
+-outfmt '7 qseqid sseqid pident length qlen slen qstart qend sstart send evalue' \
+-out ragweed-dipasm-hap1-TAIR10-blastp-top.txt \
+-num_threads 12
+
+# table formatting for merge in R
+echo -e "athalID\tannotation" > temp.athal.annot
+cat ~/ha22_scratch/ragweed-annot/TAIR10_functional_descriptions \
+| awk -F "\t" 'OFS = "\t" {print $1, $3}' \
+| tail -n +2 >> temp.athal.annot
+
+echo -e "ragID\tathalID\tpercentID\tblasteval" > temp.blast
+cat ragweed-dipasm-hap1-TAIR10-blastp-top.txt \
+| grep -v "#" \
+| sed 's/-mRNA-1//' \
+| awk 'OFS = "\t" {print $1, $2, $3, $11}' >> temp.blast
+
+echo -e "contig start end" > temp.ragweed.locs
+cat ~/om62_scratch/ragweed2022/annot_filtered/genes_filtered.gff \
+| awk '$3 == "gene" {print $1, $4, $5}' >> temp.ragweed.locs
+
+echo "ragID" > temp.ragweed.IDs
+cat ~/om62_scratch/ragweed2022/annot_filtered/genes_filtered.gff \
+| awk '$3 == "gene" {print $9}' \
+| awk -F ";" '{print $2"-RA"}' \
+| sed 's/Name=//' >> temp.ragweed.IDs
+
+echo -e "athalID\tGO" > temp.GOs
+while read line
+do name=$(echo $line | awk '{print $1}' | awk -F "." '{print $1}')
+egrep -w $name ~/ha22_scratch/ragweed-annot/ATH_GO_GOSLIM.txt \
+| awk -F "\t" '{print $3"\t"$6}' >> temp.GOs
+done < temp.athal.annot
+
+cat temp.GOs \
+| sed -r 's/\.[0-9]+//' > temp.GOs2
+
+# merge in R
+library(dplyr)
+
+athalannot = read.table("temp.athal.annot", header = T, sep = "\t", quote = "")
+
+blast = read.table("temp.blast", header = T, sep = "\t")
+
+rlocs = read.table("temp.ragweed.locs", header = T)
+rID = read.table("temp.ragweed.IDs", header = T)
+rlocsID = cbind(rlocs,rID)
+
+blast2 = merge(rlocsID, blast, by = "ragID", all.y = T)
+
+blast3 = merge(blast2, athalannot, by = "athalID", all.x = T)
+
+write.table(blast3, file = "ragweed-dipasm-hap1-annot.txt", row.names = F, quote = F, sep = '\t')
+
+# in bash
+# remove .x from athalIDs
+cat ragweed-dipasm-hap1-annot.txt \
+| sed -r 's/\.[0-9]+//' > ragweed-dipasm-hap1-annot2.txt
+
+# back in R
+library(dplyr)
+
+blast4 = read.table("ragweed-dipasm-hap1-annot2.txt", header = T, sep = "\t", quote = "")
+
+GOs = read.table("temp.GOs2", header = T)
+GOs.collapsed = GOs %>% group_by(athalID) %>% summarise(GO = paste(unique(GO), collapse=";"))
+
+blast5 = merge(blast4, GOs.collapsed, by = "athalID", all.x = T)
+
+write.table(blast5, file = "ragweed-dipasm-hap1-annot-GO.txt", row.names = F, quote = F, sep = '\t')
+
+# in bash
+cat ragweed-dipasm-hap1-annot-GO.txt | head -n 1 > ragweed-dipasm-hap1-annot-GO-1e-6.txt
+cat ragweed-dipasm-hap1-annot-GO.txt | awk '$7 < 1e-6 {print $0}' >> ragweed-dipasm-hap1-annot-GO-1e-6.txt
+
+# BLAST results with the top five TAIR10 hits for each ragweed gene
+blastp \
+-query ~/om62_scratch/ragweed2022/annot_filtered/ragweed-dipasm-hap1.all.maker.proteins.filtered.fasta \
+-db ~/ha22_scratch/ragweed-annot/TAIR10 \
+-max_target_seqs 5 \
+-max_hsps 1 \
+-outfmt '7 qseqid sseqid pident length qlen slen qstart qend sstart send evalue' \
+-out ragweed-dipasm-hap1-TAIR10-blastp-topfive.txt \
+-num_threads 12
+
+# BLAST results with the top uniprot swissprot plants database hits for each ragweed gene
+blastp \
+-query ~/om62_scratch/ragweed2022/annot_filtered/ragweed-dipasm-hap1.all.maker.proteins.filtered.fasta \
+-db ~/om62/Maker_hodgins_gff/run4/functional_annotations/uniprot_sprot_plants \
+-max_target_seqs 1 \
+-max_hsps 1 \
+-outfmt '7 qseqid sseqid pident length qlen slen qstart qend sstart send evalue' \
+-out ragweed-dipasm-hap1-upsp-blastp-top.txt \
+-num_threads 12
+
+# SNP functional annotation with snpEff
+# set up directory structure for files in snpEff directory
+cd ~/om62/snpEff/
+mkdir data/ragweed/
+cp ~/om62_scratch/ragweed2022/ref/ragweed-dipasm-hap1.fasta data/ragweed/sequences.fa
+cp ~/om62_scratch/ragweed_annotation_prasangi/final_run/ragweed-dipasm-hap1.maker.output/all.noseq.gff data/ragweed/genes.gff
+
+# add ragweed entry to snpEff config file
+echo "ragweed.genome : ragweed" >> snpEff.config
+
+# build the snpEff database
+java -jar snpEff.jar build -gff3 -v ragweed
+
+smux new-session \
+--time=24:00:00 \
+--mem=10G
+
+java -Xmx8g -jar snpEff.jar -v ragweed ~/om62_scratch/ragweed2022/vcf/ragweed-dipasm-hap1.imputed.vcf > ~/om62_scratch/ragweed2022/vcf/ragweed-dipasm-hap1.imputed.snpEff.vcf
+
+# The output is a copy of the input VCF file with the variant effects added to the 8th column, eg:
+cat ~/ha22/ragweed2/vcf/ragweed2021.imputed.SNPeff.vcf \
+| grep -v "^#" \
+| awk '$1 == "ScBFxKa_2" && $2 == 56024090 {print $1, $2, $8}'
+
+# annotated GWAS results
+for i in ~/ha22/ragweed2/gwas/*.WGS.NEW.ps.bon
+do
+
+echo $i
+
+while read a b c
+do
+scaf=$(echo $a | awk -F ":" '{print $1}')
+pos=$(echo $a | awk -F ":" '{print $2}')
+cat ~/ha22/ragweed2/vcf/ragweed2021.imputed.SNPeff.vcf \
+| grep -v "^#" \
+| awk -v scaf=$scaf -v pos=$pos '$1 == scaf && $2 == pos {print $1, $2, $8}'
+
+done < $i
+
+done
