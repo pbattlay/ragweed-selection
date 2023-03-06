@@ -1,0 +1,732 @@
+#####
+# ragweed-selection
+# Battlay et. al. 2023
+# BayPass analysis
+#####
+
+# make datasets for each BayPass analysis
+cd ~/om62_scratch/ragweed2022/baypass/
+
+# North America
+# 143 samples
+plink \
+--vcf ~/om62_scratch/ragweed2022/vcf/ragweed-dipasm-hap1.imputed.vcf \
+--allow-extra-chr \
+--keep NA-baypass-samples.list \
+--biallelic-only 'strict' \
+--snps-only 'just-acgt' \
+--maf 0.05 \
+--vcf-half-call m \
+--double-id \
+--recode \
+--out NA-big
+
+# Europe
+# 141 samples
+plink \
+--vcf ~/om62_scratch/ragweed2022/vcf/ragweed-dipasm-hap1.imputed.vcf \
+--allow-extra-chr \
+--keep EU-baypass-samples.list \
+--biallelic-only 'strict' \
+--snps-only 'just-acgt' \
+--maf 0.05 \
+--vcf-half-call m \
+--double-id \
+--recode \
+--out EU-big
+
+# name variants
+for range in NA EU
+do
+cat $range-big.map | awk '{print $1 "\t" $1 ":" $4 "\t" $3 "\t" $4 "\t" $5 "\t" $6}' > $range-big.map1
+mv $range-big.map1 $range-big.map
+done
+
+# split datasets into 160,000-varaint chunks
+cat NA-big.map | awk '{print $2}' > NA-big.snps
+split -l 160000 --numeric-suffixes NA-big.snps NA-snps-
+
+for i in NA-snps-*
+do
+plink \
+--file NA-big \
+--allow-extra-chr \
+--extract $i \
+--recode A \
+--out ${i/snps-/}
+done
+
+cat EU-big.map | awk '{print $2}' > EU-big.snps
+split -l 160000 --numeric-suffixes EU-big.snps EU-snps-
+
+for i in EU-snps-*
+do
+plink \
+--file EU-big \
+--allow-extra-chr \
+--extract $i \
+--recode A \
+--out ${i/snps-/}
+done
+
+# make datasets for omega matrices
+
+# get gene regions from GFF file
+cat ~/om62_scratch/ragweed2022/annot_filtered/genes_filtered.gff \
+| awk '$3 == "gene" {print $1, $4, $5}' > gene-regions.txt
+
+# filter gene regions list for contigs with SNPs called
+while read contig
+do
+grep "$contig\b" gene-regions.txt
+done < ~/om62_scratch/ragweed2022/vcf/imputed-scafs.txt > gene-regions1.txt
+
+mv gene-regions1.txt gene-regions.txt
+
+# LD pruning
+for range in NA EU
+do
+plink \
+--file $range-big \
+--allow-extra-chr \
+--exclude gene-regions.txt \
+--indep-pairwise 50 5 0.5 \
+--out $range
+
+# downsample to 10k variants
+plink \
+--file $range-big \
+--allow-extra-chr \
+--extract $range.prune.in \
+--thin-count 10000 \
+--recode A \
+--out $range-NULL10k
+done
+
+# Make BayPass input files in R
+library(data.table)
+library(dplyr)
+
+setwd("~/om62_scratch/ragweed2022/baypass/")
+
+for (range in c("NA", "EU")){
+file.names = dir(pattern = paste0("^", range, "-(.*).raw$"))
+
+samp.pop = read.table(paste0(range, "-baypass-samples-pops.txt"), header = F)
+
+write.table(unique(samp.pop$V2),
+	file = paste0(range, ".pops"),
+	row.names = F,
+	col.names = F,
+	quote = F)
+
+for (j in 1:length(file.names)){
+gt = as.data.frame(fread(file.names[j], header = T))
+gt = gt[, -c(1:6)]
+gt = cbind(samp.pop, gt)
+
+# list of populations
+pops = unique(gt$V2)
+
+# make empty matrix
+bp.gt = matrix(nrow = ncol(gt)-2, ncol = 0)
+
+for(i in pops){
+	pop = subset(gt, V2 == i)[, -c(1,2)]
+	bp.gt = cbind(bp.gt, colSums(pop))
+	bp.gt = cbind(bp.gt, 2*nrow(pop) - colSums(pop))
+}
+
+write.table(bp.gt,
+	file = paste(file.names[j], ".gt", sep = ""),
+	row.names = F,
+	col.names = F,
+	quote = F)
+
+write.table(rownames(bp.gt),
+	file = paste(file.names[j], ".snps", sep = ""),
+	row.names = F,
+	col.names = F,
+	quote = F)
+}
+
+env = read.table(paste0(range,"-baypass-samples-pops-env.txt"))[, -1]
+env = distinct(env)
+
+pops = read.table(paste0(range, ".pops"))
+env = merge(pops, env, by.x = "V1", by.y = "V2", all.x = T)[, -1]
+
+write.table(t(env),
+	file = paste0(range, ".env"),
+	row.names = F,
+	col.names = F,
+	quote = F)
+}
+
+# get omega matrix from null datasets
+module load baypass
+
+g_baypass -gfile NA-NULL10k.raw.gt -outprefix NA-NULL10k
+g_baypass -gfile EU-NULL10k.raw.gt -outprefix EU-NULL10k
+
+# list baypass input files
+ls *-[0-9][0-9].raw.gt > baypass-inputs.list
+
+# ragweed-baypass-ranges.sh
+#!/bin/bash
+#SBATCH --job-name=ragweed-baypass-ranges
+#SBATCH --account=om62
+#SBATCH --time=7-00:00:00
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=1
+#SBATCH --mem-per-cpu=100G
+#SBATCH --output=ragweed-baypass-ranges-%a.out
+#SBATCH --error=ragweed-baypass-ranges-%a.err
+#SBATCH --array=1-16
+
+module purge
+module load baypass/2.2
+
+cd ~/om62_scratch/ragweed2022/baypass/
+
+N=$SLURM_ARRAY_TASK_ID
+gfile=$(cat baypass-inputs.list | head -n $N | tail -n 1)
+range=$(echo $gfile | awk -F "-" '{print $1}')
+outprefix=$(echo $gfile | sed 's/.raw.gt//')
+
+# baypass run with omega matrix
+g_baypass -gfile $gfile -omegafile $range-NULL10k_mat_omega.out -efile $range.env -scalecov -outprefix BP-$outprefix
+
+###
+
+# EAA: correlation between each SNP and each environmental variable
+# in R
+library(data.table)
+library(dplyr)
+library(tidyr)
+
+setwd("~/om62_scratch/ragweed2022/baypass/")
+
+for (RANGE in c("NA", "EU")){
+
+file.names = dir(pattern = paste0(RANGE, "-[0-9]*.raw.gt$"))
+
+for (j in 1:length(file.names)){
+
+# read in baypass input data
+gt = fread(file.names[j], header = F)
+
+# we only need one column per sample (take odd numbered columns)
+cols = seq(1, ncol(gt), 2)
+gt = gt[, ..cols]
+
+# read in envirnomental variables (ditch first two rows; lat, long)
+env = read.table(paste0(RANGE, ".env"), header = F)[-c(1, 2), ]
+
+# loop over each environmental variable
+for (v in 1:nrow(env)){
+
+cors = apply(gt, 1, function(x) cor.test(as.numeric(x), as.numeric(env[v, ]), method = "kendall", exact = FALSE)$estimate)
+
+write.table(cors,
+	file = paste0(RANGE, "-BIO", v, "-tau-part", j, ".txt"),
+	row.names = F,
+	col.names = F,
+	quote = F)
+
+cors = NULL
+
+print(paste0("env ", v, " complete"))
+}
+
+print(paste0("file ", j, " complete"))
+}
+
+}
+
+# average MAF for the WZA in R
+# in R
+library(data.table)
+library(dplyr)
+library(tidyr)
+
+setwd("~/om62_scratch/ragweed2022/baypass/")
+
+for (RANGE in c("NA", "EU")){
+
+file.names = dir(pattern = paste0("^", RANGE, "-(.*).raw$"))
+
+samp.pop = read.table(paste0(RANGE, "-baypass-samples-pops.txt"), header = F)
+
+for (j in 1:length(file.names)){
+gt = as.data.frame(fread(file.names[j], header = T))
+gt = gt[, -c(1:6)]
+gt = cbind(samp.pop, gt)
+
+# list of populations
+pops = unique(gt$V2)
+
+# make empty matrix
+af = matrix(nrow = ncol(gt)-2, ncol = 0)
+
+for (i in pops){
+	pop = subset(gt, V2 == i)[, -c(1,2)]
+	af = cbind(af, colSums(pop) / (2*nrow(pop)))
+}
+
+# mean allele frequency
+af.mean = rowMeans(af)
+
+# convert to MAF
+for (k in 1:length(af.mean)){
+if (af.mean[k] > 0.5){
+af.mean[k] = 1 - af.mean[k]
+}
+}
+
+write.table(af.mean,
+	file = paste0(RANGE, "-meanmaf-part", j, ".txt"),
+	row.names = F,
+	col.names = F,
+	quote = F)
+
+}
+
+}
+
+# make WZA input files in R
+library(data.table)
+library(dplyr)
+library(tidyr)
+
+setwd("~/om62_scratch/ragweed2022/baypass/")
+
+# set WZA window size
+wsz = 10000
+
+# XtX
+for (RANGE in c("NA", "EU")){
+
+file.names = dir(pattern = paste0(RANGE, "-[0-9]*.raw.gt$"))
+file.names2 = dir(pattern = paste0(RANGE, "-[0-9]*.raw.snps$"))
+file.names3 = dir(pattern = paste0("BP-", RANGE, "(.*)_summary_pi_xtx.out$"))
+
+for (j in 1:length(file.names)){
+snps = fread(file.names2[j], header = F)
+
+snps$V2 = snps$V1
+snps = separate(data = snps, col = V2, into = c("CHR", "LOCALLELE"), sep = ":")
+snps = separate(data = snps, col = LOCALLELE, into = c("LOC", "ALLELE"), sep = "_")
+snps$LOC = as.numeric(snps$LOC)
+snps$SNP = paste(snps$CHR, snps$LOC, sep = ":")
+snps$WIND = paste0(snps$CHR, ":", ceiling(snps$LOC / wsz) * wsz - wsz + 1, "-", ceiling(snps$LOC / wsz) * wsz)
+
+stat = fread(file.names3[j], header = T)
+
+maf = fread(paste0(RANGE, "-meanmaf-part", j, ".txt"), header = F)
+
+wza.in.part = cbind(snps[, c("SNP", "WIND")], abs(stat$XtXst), maf)
+
+if (j == 1) {
+wza.in = wza.in.part
+} else {
+wza.in = rbind(wza.in, wza.in.part)
+}
+
+}
+colnames(wza.in) = c("SNP", "WIND", "XTX", "MAF")
+
+write.table(wza.in,
+	file = paste0(RANGE, "-XtX.wzain.csv"),
+	row.names = F,
+	col.names = T,
+	quote = F,
+	sep = ",")
+
+}
+
+# EAA
+for (RANGE in c("NA", "EU")){
+
+file.names = dir(pattern = paste0(RANGE, "-[0-9]*.raw.gt$"))
+file.names2 = dir(pattern = paste0(RANGE, "-[0-9]*.raw.snps$"))
+
+# loop over 19 WorldClim variables
+for (v in 1:19){
+
+for (j in 1:length(file.names)){
+snps = fread(file.names2[j], header = F)
+
+snps$V2 = snps$V1
+snps = separate(data = snps, col = V2, into = c("CHR", "LOCALLELE"), sep = ":")
+snps = separate(data = snps, col = LOCALLELE, into = c("LOC", "ALLELE"), sep = "_")
+snps$LOC = as.numeric(snps$LOC)
+snps$SNP = paste(snps$CHR, snps$LOC, sep = ":")
+snps$WIND = paste0(snps$CHR, ":", ceiling(snps$LOC / wsz) * wsz - wsz + 1, "-", ceiling(snps$LOC / wsz) * wsz)
+
+stat = fread(paste0(RANGE, "-BIO", v, "-tau-part", j, ".txt"), header = F)
+
+maf = fread(paste0(RANGE, "-meanmaf-part", j, ".txt"), header = F)
+
+wza.in.part = cbind(snps[, c("SNP", "WIND")], abs(stat$V1), maf)
+
+if (j == 1) {
+wza.in = wza.in.part
+} else {
+wza.in = rbind(wza.in, wza.in.part)
+}
+
+}
+colnames(wza.in) = c("SNP", "WIND", "TAU", "MAF")
+
+write.table(wza.in,
+	file = paste0(RANGE, "-BIO", v, ".wzain.csv"),
+	row.names = F,
+	col.names = T,
+	quote = F,
+	sep = ",")
+
+print(paste0("env ", v, " complete"))
+}
+
+}
+
+# run the WZA
+module load python/3.8.5-gcc8
+
+for WZAIN in *-XtX.wzain.csv
+do
+python3 general_WZA_script.py \
+--correlations $WZAIN \
+--summary_stat XTX \
+--large_i_small_p \
+--window WIND \
+--MAF MAF \
+--output ${WZAIN/wzain/wzaout} \
+--sep ","
+done
+
+for WZAIN in *-BIO*.wzain.csv
+do
+python3 general_WZA_script.py \
+--correlations $WZAIN \
+--summary_stat TAU \
+--large_i_small_p \
+--window WIND \
+--MAF MAF \
+--output ${WZAIN/wzain/wzaout} \
+--sep ","
+done
+
+# identify WZA outliers in R
+library(data.table)
+library(dplyr)
+library(tidyr)
+
+setwd("~/om62_scratch/ragweed2022/baypass/")
+
+for (RANGE in c("NA", "EU")){
+
+xtx = fread(paste0(RAlargeNGE, "-XtX.wzaout.csv"), header = T)
+
+# remove windows with no p-values (these will have < 3 SNPs)
+xtx = subset(xtx, Z_pVal != "NA")
+
+# take bottom 5% of p-values
+xtx$empp = rank(xtx$Z_pVal) / length(xtx$Z_pVal)
+xtx.ol = subset(xtx, empp < 0.05)$gene
+
+write.table(xtx.ol,
+	file = paste0(RANGE, "-XtX.wzaout.csv.cand"),
+	row.names = F,
+	col.names = F,
+	quote = F)
+
+eaa.list = dir(pattern = paste0(RANGE, "-BIO[0-9]*.wzaout.csv$"))
+
+for (i in 1:length(eaa.list)){
+eaa = fread(eaa.list[i], header = T)
+
+# remove windows with no p-values (these will have < 3 SNPs)
+eaa = subset(eaa, Z_pVal != "NA")
+
+# take bottom 5% of p-values
+eaa$empp = rank(eaa$Z_pVal) / length(eaa$Z_pVal)
+eaa.ol = subset(eaa, empp < 0.05)$gene
+
+write.table(eaa.ol,
+	file = paste0(eaa.list[i], ".cand"),
+	row.names = F,
+	col.names = F,
+	quote = F)
+
+# get the overlap with xtx
+xtx.eaa.ol = eaa.ol[which(eaa.ol %in% xtx.ol)]
+
+write.table(xtx.eaa.ol,
+	file = paste0(eaa.list[i], ".XtX.EAA.cand"),
+	row.names = F,
+	col.names = F,
+	quote = F)
+}
+
+}
+
+# windows that are outliers for XtX and any environment in each range
+for RANGE in NA EU
+do
+cat $RANGE-BIO*.wzaout.csv.XtX.EAA.cand | sort -u > $RANGE-XtX.EAA.cand
+done
+
+grep -f NA-XtX.EAA.cand EU-XtX.EAA.cand > OL-XtX.EAA.cand
+
+# statistical data
+# in R
+library(data.table)
+library(dplyr)
+library(tidyr)
+
+setwd("~/om62_scratch/ragweed2022/baypass/")
+
+# WZA windows considered in both ranges
+na.wind = subset(fread("NA-XtX.wzaout.csv", header = T, sep = ","), Z_pVal != "NA")$gene # 54093
+eu.wind = subset(fread("EU-XtX.wzaout.csv", header = T, sep = ","), Z_pVal != "NA")$gene # 53949
+length(na.wind) # 54093
+length(eu.wind) # 53949
+length(na.wind[na.wind %in% eu.wind]) # 53205
+
+# XtX thresholds for emp p < 0.01 and bonferroni p < 0.05
+# North America
+RANGE = "NA"
+
+file.names = dir(pattern = paste0("BP-", RANGE, "(.*)_summary_pi_xtx.out$"))
+
+for (j in 1:length(file.names)){
+stat.part = fread(file.names[j], header = T)
+
+if (j == 1) {
+stat = stat.part
+} else {
+stat = rbind(stat, stat.part)
+}
+
+}
+
+stat$P = 1 / (10 ^ stat$"log10(1/pval)")
+stat$empP = rank(stat$P) / length(stat$P)
+
+min(subset(stat, P < (0.05 / nrow(stat)))$XtXst) # 112.1885
+min(subset(stat, empP < 0.05)$XtXst) # 70.45729
+
+# Europe
+RANGE = "EU"
+
+file.names = dir(pattern = paste0("BP-", RANGE, "(.*)_summary_pi_xtx.out$"))
+
+for (j in 1:length(file.names)){
+stat.part = fread(file.names[j], header = T)
+
+if (j == 1) {
+stat = stat.part
+} else {
+stat = rbind(stat, stat.part)
+}
+
+}
+
+stat$P = 1 / (10 ^ stat$"log10(1/pval)")
+stat$empP = rank(stat$P) / length(stat$P)
+
+min(subset(stat, P < (0.05 / nrow(stat)))$XtXst) # 92.81083
+min(subset(stat, empP < 0.05)$XtXst) # 51.92722
+
+###
+# XtX-EAA outliers
+wc -l NA-XtX.EAA.cand # 2167
+wc -l EU-XtX.EAA.cand # 1357
+wc -l OL-XtX.EAA.cand # 291
+
+# is there significant parallelism in WZA XtX-EAA windows?
+overlap = 291
+na.out.wind = 2167
+eu.out.wind = 1357
+wind.tot = 53205
+
+phyper(overlap, na.out.wind, wind.tot - na.out.wind, eu.out.wind, lower.tail = FALSE, log.p = FALSE)
+# 1.074657e-126
+
+###
+# Repeat XtX-EAA outliers with cosecutive windows and haploblocks == 1 window each
+# NA = 1342 + 15 HBs
+# EU = 1108 + 15 HBs
+# OL = 167 + 15 HBs
+
+# is there significant parallelism in WZA XtX-EAA windows?
+overlap = 167 + 15
+na.out.wind = 1342 + 15
+eu.out.wind = 1108 + 15
+wind.tot = 53205
+
+phyper(overlap, na.out.wind, wind.tot - na.out.wind, eu.out.wind, lower.tail = FALSE, log.p = FALSE)
+# 1.287028e-91
+
+# functional annotation
+# get lists of all WZA windows analyzed
+cat NA-XtX.wzaout.csv | tail -n +2 | awk -F "," '$6 != "" {print $1}' > NA-wza-allwinds.txt
+cat EU-XtX.wzaout.csv | tail -n +2 | awk -F "," '$6 != "" {print $1}' > EU-wza-allwinds.txt
+while read wind; do cat EU-wza-allwinds.txt | grep $wind; done < NA-wza-allwinds.txt > OL-wza-allwinds.txt
+
+# get lists of WZA candidate windows
+# annotate window lists
+for i in NA-wza-allwinds.txt EU-wza-allwinds.txt OL-wza-allwinds.txt NA-XtX.EAA.cand EU-XtX.EAA.cand OL-XtX.EAA.cand
+do
+cat $i | sed 's/:/ /' | sed 's/-/ /' | while read contig loc1 loc2
+do cat ../fun/ragweed-dipasm-hap1-annot-GO-1e-6.txt \
+| awk -F "\t" \
+-v c="$contig" \
+-v l="$loc1" \
+'BEGIN{OFS="\t";} $3 == c && $5 >= l {print $0}' \
+| awk -F "\t" \
+-v c="$contig" \
+-v l="$loc2" \
+'BEGIN{OFS="\t";} $3 == c && $4 <= l {print $0}'
+done | sort -u > $i.annot
+done
+
+# count number of flowering time genes and total genes in each list of annotations
+for i in NA-wza-allwinds.txt EU-wza-allwinds.txt OL-wza-allwinds.txt NA-XtX.EAA.cand EU-XtX.EAA.cand OL-XtX.EAA.cand
+do
+echo $i
+while read ft
+do
+grep $ft $i.annot
+done < ../fun/ft-genes-athalID.txt | wc -l
+cat $i.annot | wc -l
+done
+
+#NA-wza-allwinds.txt
+#426
+#22158
+#EU-wza-allwinds.txt
+#429
+#22121
+#OL-wza-allwinds.txt
+#425
+#21887
+#NA-XtX.EAA.cand
+#28
+#864
+#EU-XtX.EAA.cand
+#22
+#758
+#OL-XtX.EAA.cand
+#3
+#115
+
+# test flowering time gene enrichment in R
+sigft.genes = 3
+sig.genes = 115
+ft.genes = 425
+all.genes = 21887
+
+fisher.test(rbind(c(sigft.genes, sig.genes - sigft.genes), c(ft.genes - sigft.genes, ((all.genes - ft.genes) - (sig.genes - sigft.genes)))))
+
+# Gene Ontology Enrichment
+for i in *.annot
+do
+cat $i \
+| awk -F "\t" '{print $2"\t"$9}' \
+| sed 's/ GO/\tGO/' \
+| sed 's/ NA/\tNA/' \
+| sed 's/;GO/, GO/g' > $i.topGO
+done
+
+# in R (local)
+library(topGO)
+
+setwd("~/om62_scratch/ragweed2022/baypass/")
+
+# topGO analysis (http://avrilomics.blogspot.com/2015/07/using-topgo-to-test-for-go-term.html)
+# read in data for topGO
+
+for (range in c("NA", "EU", "OL")){
+geneID2GO = readMappings(file = paste0(range, "-wza-allwinds.txt.annot.topGO"))
+
+geneUniverse = names(geneID2GO)
+
+genesOfInterest = read.table(paste0(range, "-XtX.EAA.cand.annot.topGO"), sep = "\t")
+genesOfInterest = as.character(genesOfInterest$V1)
+
+geneList = factor(as.integer(geneUniverse %in% genesOfInterest))
+names(geneList) = geneUniverse
+
+# empty results table
+go.out = as.data.frame(matrix(ncol = 7, nrow = 0))
+colnames(go.out) = c("GO.ID", "Term", "Annotated", "Significant", "Expected", "classicFisher", "ontology")
+
+for (o in c("BP", "MF", "CC")){
+myGOdata = new("topGOdata",
+	description = "My project",
+	ontology = o,
+	allGenes = geneList,
+	annot = annFUN.gene2GO,
+	gene2GO = geneID2GO)
+
+resultFisher = runTest(myGOdata, algorithm = "weight01", statistic = "fisher")
+
+allGO = usedGO(object = myGOdata)
+
+allRes = GenTable(myGOdata,
+	classicFisher = resultFisher,
+	orderBy = "resultFisher",
+	ranksOf = "classicFisher",
+	topNodes = length(allGO))
+
+allRes$classicFisher = as.numeric(allRes$classicFisher)
+
+sigRes = subset(allRes, classicFisher < 0.05)
+
+if (nrow(sigRes) != 0){
+sigRes$ontology = o
+go.out = rbind(go.out, sigRes)
+}
+
+}
+ 
+write.table(go.out,
+file = paste0(range, "-XtX.EAA.cand.annot.topGO.out"),
+sep = "\t",
+row.names = F,
+col.names = T,
+quote = F)
+
+}
+
+# How many parallel XtX-EAA outliers occur in haploblocks?
+cd ~/om62_scratch/ragweed2022/baypass/
+
+cat ../haploblocks-6-1-23.txt | while read CHR START STOP
+do
+echo "Haploblock: " $CHR ":" $START "-" $STOP
+echo $(cat OL-XtX.EAA.cand | sed 's/:/ /' | sed 's/-/ /' | awk -v CHR=$CHR -v START=$START -v STOP=$STOP '$1 == CHR && $2 > START && $2 < STOP {print $1":"$2"-"$3}') \
+$(cat OL-XtX.EAA.cand | sed 's/:/ /' | sed 's/-/ /' | awk -v CHR=$CHR -v START=$START -v STOP=$STOP '$1 == CHR && $3 > START && $3 < STOP {print $1":"$2"-"$3}') | sed 's/ /\n/g' | sort -u | wc -l
+done # 77 total
+
+# and is this a significant enrichment?
+
+# count total number of windows in haploblocks
+cat ../haploblocks-6-1-23.txt | while read CHR START STOP
+do
+cat OL-wza-allwinds.txt | sed 's/:/ /' | sed 's/-/ /' | awk -v CHR=$CHR -v START=$START -v STOP=$STOP '$1 == CHR && $2 > START && $2 < STOP {print $1":"$2"-"$3}'
+cat OL-wza-allwinds.txt | sed 's/:/ /' | sed 's/-/ /' | awk -v CHR=$CHR -v START=$START -v STOP=$STOP '$1 == CHR && $3 > START && $3 < STOP {print $1":"$2"-"$3}'
+done | sort -u | wc -l # 5164
+
+# total number of windows in the genome
+cat OL-wza-allwinds.txt | wc -l # 53205
+
+# total number of parallel XtX-EAA outliers
+cat OL-XtX.EAA.cand | wc -l # 291
+
+# in R
+phyper(77, 291, 53205-291, 5164, lower.tail = FALSE, log.p = FALSE)
+# 5.797362e-17
